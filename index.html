@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>拼豆像素编辑器</title>
+    <link rel="stylesheet" href="src/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">PD</span>
+          <div>
+            <strong>拼豆编辑器</strong>
+            <span id="saveState">本机自动恢复</span>
+          </div>
+        </div>
+
+        <div class="project-field">
+          <label for="projectName">项目</label>
+          <input id="projectName" type="text" value="未命名拼豆工程">
+        </div>
+
+        <nav class="toolbar" aria-label="主要工具">
+          <button id="importImageBtn" type="button" class="command-primary">导入图片</button>
+          <button id="openProjectBtn" type="button">打开工程</button>
+          <button id="saveProjectBtn" type="button">保存 .pindou</button>
+          <button id="undoBtn" type="button" title="撤销">撤销</button>
+          <button id="redoBtn" type="button" title="重做">重做</button>
+          <select id="viewMode" aria-label="视图模式">
+            <option value="pixel">像素</option>
+            <option value="blueprint">蓝图</option>
+            <option value="board">分板</option>
+            <option value="steps">制作步骤</option>
+            <option value="source">原图</option>
+          </select>
+          <label class="zoom-control">缩放 <input id="zoomRange" type="range" min="8" max="30" value="16"></label>
+        </nav>
+      </header>
+
+      <main class="editor">
+        <aside class="panel left-panel" aria-label="项目面板">
+          <section>
+            <h2>生成助手</h2>
+            <div class="control-grid">
+              <label>宽格数 <input id="gridWidth" type="number" min="8" max="220" value="48"></label>
+              <label>高格数 <input id="gridHeight" type="number" min="8" max="220" value="48"></label>
+              <label>豆径 <select id="beadSize"><option value="5">5mm</option><option value="2.6">2.6mm</option></select></label>
+              <label>模式 <select id="pixelMode"><option value="dominant">区域主导色</option><option value="nearest">最近邻</option></select></label>
+            </div>
+            <button id="pixelizeBtn" type="button" class="primary wide">生成拼豆图</button>
+          </section>
+
+          <section>
+            <h2>工具</h2>
+            <div class="tool-grid" id="toolGrid">
+              <button type="button" data-tool="brush" class="active">画笔</button>
+              <button type="button" data-tool="eraser">橡皮</button>
+              <button type="button" data-tool="eyedropper">吸管</button>
+              <button type="button" data-tool="fill">填充</button>
+            </div>
+          </section>
+
+          <section>
+            <h2>图层</h2>
+            <ol class="layer-list">
+              <li><span>原图</span><small id="sourceLayerState">未导入</small></li>
+              <li><span>主体 mask</span><small>本地阈值 / 可选 API</small></li>
+              <li><span>基础像素层</span><small id="gridLayerState">48 x 48</small></li>
+              <li><span>手动修正层</span><small id="historyCount">0 步</small></li>
+              <li><span>分板层</span><small>29 x 29</small></li>
+            </ol>
+          </section>
+        </aside>
+
+        <section class="canvas-stage" aria-label="主画布">
+          <div class="canvas-head">
+            <div>
+              <strong id="canvasTitle">像素视图</strong>
+              <span id="canvasSubtitle">点击格子编辑，滚轮区域可横向/纵向滚动</span>
+            </div>
+            <div class="workspace-metrics" aria-label="工程指标">
+              <span><b id="metricGrid">48 x 48</b><small>网格</small></span>
+              <span><b id="metricPalette">26</b><small>可用色</small></span>
+              <span><b id="metricSteps">0</b><small>步骤</small></span>
+            </div>
+            <div class="canvas-actions">
+              <button id="exportPngBtn" type="button">导出 PNG</button>
+              <button id="exportStepsBtn" type="button">导出步骤 JSON</button>
+            </div>
+          </div>
+          <div class="canvas-scroll" id="canvasScroll">
+            <canvas id="beadCanvas" width="768" height="768"></canvas>
+          </div>
+        </section>
+
+        <aside class="panel right-panel" aria-label="检查器">
+          <section>
+            <h2>色卡</h2>
+            <div class="brand-filters" id="brandFilters"></div>
+            <div class="selected-color" id="selectedColor"></div>
+            <div class="palette-grid" id="paletteGrid"></div>
+          </section>
+
+          <section>
+            <h2>库存与替换</h2>
+            <label>禁用当前色 <input id="disableCurrent" type="checkbox"></label>
+            <label>替换为选中色 <select id="replaceFrom"></select></label>
+            <button id="replaceColorBtn" type="button" class="wide">替换颜色</button>
+          </section>
+
+          <section>
+            <h2>材料清单</h2>
+            <div class="material-list" id="materialList"></div>
+          </section>
+
+          <section>
+            <h2>WebDAV</h2>
+            <label>同步地址 <input id="webdavUrl" type="url" placeholder="https://example.com/path/project.pindou"></label>
+            <label>用户名 <input id="webdavUser" type="text" autocomplete="username"></label>
+            <label>密码/Token <input id="webdavPass" type="password" autocomplete="current-password"></label>
+            <button id="webdavSyncBtn" type="button" class="wide">同步工程</button>
+            <p class="hint" id="webdavState">仅在你配置后连接远端。</p>
+          </section>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <span id="statusDimensions">48 x 48</span>
+        <span id="statusBeads">0 颗豆</span>
+        <span id="statusColor">未选色</span>
+        <span id="statusBoard">分板 2 x 2</span>
+      </footer>
+    </div>
+
+    <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+    <input id="projectInput" type="file" accept=".pindou,application/json" hidden>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>

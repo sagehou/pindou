@@ -1,0 +1,10 @@
+{
+  "name": "pindou-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/core.test.js",
+    "check": "node --check src/app.js && node --check src/core/palette.js && node --check src/core/grid.js && node --check src/core/project.js && node --check src/core/exporters.js"
+  }
+}
