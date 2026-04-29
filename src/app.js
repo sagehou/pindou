@@ -9,6 +9,7 @@ const dom = {
   importImageBtn: document.querySelector('#importImageBtn'),
   openProjectBtn: document.querySelector('#openProjectBtn'),
   saveProjectBtn: document.querySelector('#saveProjectBtn'),
+  clearCanvasBtn: document.querySelector('#clearCanvasBtn'),
   undoBtn: document.querySelector('#undoBtn'),
   redoBtn: document.querySelector('#redoBtn'),
   viewMode: document.querySelector('#viewMode'),
@@ -52,7 +53,7 @@ const dom = {
 
 const ctx = dom.canvas.getContext('2d');
 const state = {
-  project: createProject({ width: 48, height: 48 }),
+  project: createProject({ width: 48, height: 48, paletteBrands: ['MARD'] }),
   palette: mergePalettes(),
   selectedColorId: 'MARD:M-R01',
   tool: 'brush',
@@ -78,6 +79,7 @@ function bindEvents() {
   dom.importImageBtn.addEventListener('click', () => dom.imageInput.click());
   dom.openProjectBtn.addEventListener('click', () => dom.projectInput.click());
   dom.saveProjectBtn.addEventListener('click', saveProjectFile);
+  dom.clearCanvasBtn.addEventListener('click', clearCanvas);
   dom.imageInput.addEventListener('change', handleImageInput);
   dom.projectInput.addEventListener('change', handleProjectInput);
   dom.pixelizeBtn.addEventListener('click', pixelizeSourceImage);
@@ -130,6 +132,7 @@ function bindEvents() {
 }
 
 function renderAll() {
+  normalizeActivePaletteBrand();
   state.palette = mergePalettes(state.project.paletteBrands);
   renderProjectFields();
   renderTools();
@@ -159,26 +162,25 @@ function renderTools() {
 function renderBrandFilters() {
   dom.brandFilters.innerHTML = '';
   for (const brandKey of Object.keys(DOMESTIC_PALETTES)) {
-    const label = document.createElement('label');
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.checked = state.project.paletteBrands.includes(brandKey);
-    input.addEventListener('change', () => {
-      if (input.checked) {
-        state.project.paletteBrands = [...new Set([...state.project.paletteBrands, brandKey])];
-      } else {
-        state.project.paletteBrands = state.project.paletteBrands.filter((brand) => brand !== brandKey);
-      }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `brand-filter${state.project.paletteBrands[0] === brandKey ? ' active' : ''}`;
+    button.dataset.brand = brandKey;
+    button.setAttribute('aria-pressed', state.project.paletteBrands[0] === brandKey ? 'true' : 'false');
+    button.innerHTML = `<span>${brandLabel(brandKey)}</span><small>${DOMESTIC_PALETTES[brandKey].length} 色</small>`;
+    button.addEventListener('click', () => {
+      state.project.paletteBrands = [brandKey];
       state.palette = mergePalettes(state.project.paletteBrands);
       if (!state.palette.some((bead) => bead.id === state.selectedColorId)) {
         state.selectedColorId = state.palette[0]?.id ?? null;
       }
       autosave();
+      renderBrandFilters();
       renderPalette();
       renderMaterials();
+      renderStatus();
     });
-    label.append(brandLabel(brandKey), input);
-    dom.brandFilters.append(label);
+    dom.brandFilters.append(button);
   }
 }
 
@@ -435,6 +437,17 @@ function resizeEmptyGrid() {
   renderAll();
 }
 
+function clearCanvas() {
+  const { width, height } = state.project.grid;
+  pushUndo();
+  state.redoStack = [];
+  state.project.grid = createGrid(width, height, null);
+  state.activeStep = 0;
+  setSaveState('画布已清空');
+  autosave();
+  renderAll();
+}
+
 function handlePointerDown(event) {
   state.pointerDown = true;
   applyCanvasTool(event);
@@ -576,10 +589,15 @@ function restoreAutosave() {
   if (!saved) return;
   try {
     state.project = parseProject(saved);
-    if (!state.project.paletteBrands?.length) state.project.paletteBrands = ['MARD', 'COCO'];
+    normalizeActivePaletteBrand();
   } catch {
     localStorage.removeItem('pindou.autosave');
   }
+}
+
+function normalizeActivePaletteBrand() {
+  const [brand] = state.project.paletteBrands ?? [];
+  state.project.paletteBrands = DOMESTIC_PALETTES[brand] ? [brand] : ['MARD'];
 }
 
 function loadWebDavSettings() {
