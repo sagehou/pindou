@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DOMESTIC_PALETTES, findNearestBead, mergePalettes } from '../src/core/palette.js';
-import { createGrid, fillConnected, paintCell, replaceColor } from '../src/core/grid.js';
+import { createGrid, fillConnected, paintCell, replaceColor, replaceConnectedColor } from '../src/core/grid.js';
 import { createProject, serializeProject, parseProject } from '../src/core/project.js';
 import { createMaterialList, createMakingSteps } from '../src/core/exporters.js';
 
@@ -35,6 +35,26 @@ test('grid editing paints, fills connected cells, and replaces colors', () => {
   grid = replaceColor(grid, 'yellow', 'orange');
   assert.equal(grid.cells[0][0], 'orange');
   assert.equal(grid.cells[0][1], 'orange');
+});
+
+test('connected replacement only changes the selected region and leaves matching interior colors intact', () => {
+  const grid = {
+    width: 4,
+    height: 4,
+    cells: [
+      ['bg', 'bg', 'bg', 'bg'],
+      ['bg', 'fg', 'fg', 'bg'],
+      ['bg', 'fg', 'bg', 'bg'],
+      ['bg', 'bg', 'bg', 'fg']
+    ]
+  };
+
+  const replaced = replaceConnectedColor(grid, 0, 0, 'empty');
+
+  assert.equal(replaced.cells[0][0], 'empty');
+  assert.equal(replaced.cells[2][2], 'empty');
+  assert.equal(replaced.cells[1][1], 'fg');
+  assert.equal(replaced.cells[3][3], 'fg');
 });
 
 test('project serialization preserves grid, palette, inventory, and settings', () => {

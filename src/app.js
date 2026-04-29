@@ -1,5 +1,5 @@
 import { DOMESTIC_PALETTES, beadCssColor, findNearestBead, mergePalettes } from './core/palette.js';
-import { createGrid, fillConnected, paintCell, replaceColor } from './core/grid.js';
+import { createGrid, fillConnected, paintCell, replaceColor, replaceConnectedColor } from './core/grid.js';
 import { createProject, parseProject, serializeProject } from './core/project.js';
 import { createMakingSteps, createMaterialList } from './core/exporters.js';
 
@@ -35,7 +35,8 @@ const dom = {
   selectedColor: document.querySelector('#selectedColor'),
   paletteGrid: document.querySelector('#paletteGrid'),
   disableCurrent: document.querySelector('#disableCurrent'),
-  replaceFrom: document.querySelector('#replaceFrom'),
+  replaceSource: document.querySelector('#replaceSource'),
+  replaceScope: document.querySelector('#replaceScope'),
   replaceColorBtn: document.querySelector('#replaceColorBtn'),
   materialList: document.querySelector('#materialList'),
   webdavUrl: document.querySelector('#webdavUrl'),
@@ -56,7 +57,9 @@ const state = {
   project: createProject({ width: 48, height: 48, paletteBrands: ['MARD'] }),
   palette: mergePalettes(),
   selectedColorId: 'MARD:M-R01',
-  tool: 'brush',
+  selectedSourceColorId: null,
+  selectedCell: null,
+  tool: 'select',
   view: 'pixel',
   zoom: 16,
   undoStack: [],
@@ -85,13 +88,13 @@ function bindEvents() {
   dom.pixelizeBtn.addEventListener('click', pixelizeSourceImage);
   dom.projectName.addEventListener('input', () => {
     state.project.name = dom.projectName.value.trim() || '未命名拼豆工程';
-    autosave();
+    autosave('已自动保存项目名');
   });
   dom.gridWidth.addEventListener('change', resizeEmptyGrid);
   dom.gridHeight.addEventListener('change', resizeEmptyGrid);
   dom.beadSize.addEventListener('change', () => {
     state.project.beadSizeMm = Number(dom.beadSize.value);
-    autosave();
+    autosave('豆径设置已更新');
     renderStatus();
   });
   dom.viewMode.addEventListener('change', () => {
@@ -120,6 +123,7 @@ function bindEvents() {
     if (!swatch) return;
     state.selectedColorId = swatch.dataset.colorId;
     renderPalette();
+    renderReplacement();
     renderStatus();
   });
   dom.disableCurrent.addEventListener('change', toggleSelectedDisabled);
@@ -138,6 +142,7 @@ function renderAll() {
   renderTools();
   renderBrandFilters();
   renderPalette();
+  renderReplacement();
   renderCanvas();
   renderMaterials();
   renderStatus();
@@ -174,7 +179,7 @@ function renderBrandFilters() {
       if (!state.palette.some((bead) => bead.id === state.selectedColorId)) {
         state.selectedColorId = state.palette[0]?.id ?? null;
       }
-      autosave();
+      autosave('已切换色卡品牌');
       renderBrandFilters();
       renderPalette();
       renderMaterials();
@@ -192,7 +197,6 @@ function renderPalette() {
 
   dom.disableCurrent.checked = Boolean(selected && state.project.disabledColorIds.includes(selected.id));
   dom.paletteGrid.innerHTML = '';
-  dom.replaceFrom.innerHTML = '';
 
   for (const bead of state.palette) {
     const disabled = state.project.disabledColorIds.includes(bead.id);
@@ -203,11 +207,23 @@ function renderPalette() {
     swatch.innerHTML = `<span class="color-chip" style="background:${beadCssColor(bead)}"></span><span>${bead.code}<br><small>${bead.name}</small></span>`;
     dom.paletteGrid.append(swatch);
 
-    const option = document.createElement('option');
-    option.value = bead.id;
-    option.textContent = `${bead.brand} ${bead.code} ${bead.name}`;
-    dom.replaceFrom.append(option);
   }
+}
+
+function renderReplacement() {
+  if (!state.selectedCell) {
+    dom.replaceSource.textContent = '先用选择工具点击画布颜色';
+    return;
+  }
+
+  const source = getBeadById(state.selectedSourceColorId);
+  const target = getSelectedBead();
+  const sourceLabel = source ? `${source.brand} ${source.code} ${source.name}` : '空白背景';
+  const targetLabel = target ? `${target.brand} ${target.code} ${target.name}` : '未选择目标色';
+  dom.replaceSource.innerHTML = `
+    <span>源：${sourceLabel}</span>
+    <span>目标：${targetLabel}</span>
+  `;
 }
 
 function renderCanvas() {
@@ -243,6 +259,7 @@ function renderCanvas() {
   }
 
   if (state.view === 'board') drawBoardLines(grid);
+  drawSelectedCell();
   drawGridLines(grid, width, height);
 }
 
@@ -331,6 +348,17 @@ function drawBoardLines(grid) {
   ctx.stroke();
 }
 
+function drawSelectedCell() {
+  if (!state.selectedCell) return;
+  const { x, y } = state.selectedCell;
+  ctx.save();
+  ctx.strokeStyle = '#9a7aa2';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 3]);
+  ctx.strokeRect(x * state.zoom + 2, y * state.zoom + 2, state.zoom - 4, state.zoom - 4);
+  ctx.restore();
+}
+
 function renderMaterials() {
   const materials = createMaterialList(state.project.grid, state.palette);
   dom.materialList.innerHTML = '';
@@ -373,9 +401,7 @@ async function handleImageInput(event) {
   const image = await loadImage(dataUrl);
   state.sourceImage = image;
   state.project.source = { name: file.name, type: file.type, dataUrl, width: image.naturalWidth, height: image.naturalHeight };
-  setSaveState('已导入原图');
-  autosave();
-  renderAll();
+  pixelizeSourceImage('已导入并生成拼豆图');
 }
 
 async function handleProjectInput(event) {
@@ -388,12 +414,11 @@ async function handleProjectInput(event) {
   state.palette = mergePalettes(state.project.paletteBrands);
   if (state.project.source?.dataUrl) state.sourceImage = await loadImage(state.project.source.dataUrl);
   state.selectedColorId = state.palette[0]?.id ?? null;
-  setSaveState('工程已打开');
-  autosave();
+  autosave('工程已打开');
   renderAll();
 }
 
-function pixelizeSourceImage() {
+function pixelizeSourceImage(successMessage = '已生成拼豆图') {
   if (!state.sourceImage) {
     setSaveState('请先导入图片');
     return;
@@ -422,8 +447,10 @@ function pixelizeSourceImage() {
   pushUndo();
   state.project.grid = grid;
   state.project.beadSizeMm = Number(dom.beadSize.value);
-  setSaveState('已生成拼豆图');
-  autosave();
+  state.tool = 'select';
+  state.selectedCell = null;
+  state.selectedSourceColorId = null;
+  autosave(successMessage);
   renderAll();
 }
 
@@ -433,7 +460,7 @@ function resizeEmptyGrid() {
   if (state.project.grid.width === width && state.project.grid.height === height) return;
   pushUndo();
   state.project.grid = createGrid(width, height, null);
-  autosave();
+  autosave('画布尺寸已重置');
   renderAll();
 }
 
@@ -443,8 +470,9 @@ function clearCanvas() {
   state.redoStack = [];
   state.project.grid = createGrid(width, height, null);
   state.activeStep = 0;
-  setSaveState('画布已清空');
-  autosave();
+  state.selectedCell = null;
+  state.selectedSourceColorId = null;
+  autosave('画布已清空');
   renderAll();
 }
 
@@ -454,7 +482,7 @@ function handlePointerDown(event) {
 }
 
 function handlePointerMove(event) {
-  if (!state.pointerDown || state.tool === 'fill' || state.tool === 'eyedropper') return;
+  if (!state.pointerDown || ['fill', 'eyedropper', 'select'].includes(state.tool)) return;
   applyCanvasTool(event);
 }
 
@@ -463,9 +491,14 @@ function applyCanvasTool(event) {
   if (!cell) return;
   const current = state.project.grid.cells[cell.y][cell.x];
 
-  if (state.tool === 'eyedropper') {
-    if (current) state.selectedColorId = current;
+  if (state.tool === 'select' || state.tool === 'eyedropper') {
+    state.selectedCell = cell;
+    state.selectedSourceColorId = current;
+    if (current && state.palette.some((bead) => bead.id === current)) {
+      state.selectedColorId = current;
+    }
     renderPalette();
+    renderReplacement();
     renderStatus();
     return;
   }
@@ -479,7 +512,7 @@ function applyCanvasTool(event) {
     state.project.grid = fillConnected(state.project.grid, cell.x, cell.y, state.selectedColorId);
   }
   state.redoStack = [];
-  autosave();
+  autosave('画布已更新');
   renderCanvas();
   renderMaterials();
   renderStatus();
@@ -503,7 +536,7 @@ function undo() {
   if (!previous) return;
   state.redoStack.push(JSON.stringify(state.project.grid));
   state.project.grid = JSON.parse(previous);
-  autosave();
+  autosave('已撤销');
   renderAll();
 }
 
@@ -512,7 +545,7 @@ function redo() {
   if (!next) return;
   state.undoStack.push(JSON.stringify(state.project.grid));
   state.project.grid = JSON.parse(next);
-  autosave();
+  autosave('已重做');
   renderAll();
 }
 
@@ -522,16 +555,32 @@ function toggleSelectedDisabled() {
   if (dom.disableCurrent.checked) disabled.add(state.selectedColorId);
   else disabled.delete(state.selectedColorId);
   state.project.disabledColorIds = [...disabled];
-  autosave();
+  autosave('禁用色设置已更新');
   renderPalette();
 }
 
 function replaceSelectedColor() {
-  const from = dom.replaceFrom.value;
-  if (!from || !state.selectedColorId || from === state.selectedColorId) return;
+  if (!state.selectedCell || !state.selectedColorId) {
+    setSaveState('请先在画布选择要替换的颜色');
+    return;
+  }
+  if (state.selectedSourceColorId === state.selectedColorId) {
+    setSaveState('源颜色和目标颜色相同');
+    return;
+  }
   pushUndo();
-  state.project.grid = replaceColor(state.project.grid, from, state.selectedColorId);
-  autosave();
+  if (dom.replaceScope.value === 'connected') {
+    state.project.grid = replaceConnectedColor(
+      state.project.grid,
+      state.selectedCell.x,
+      state.selectedCell.y,
+      state.selectedColorId
+    );
+  } else {
+    state.project.grid = replaceColor(state.project.grid, state.selectedSourceColorId, state.selectedColorId);
+  }
+  state.selectedSourceColorId = state.selectedColorId;
+  autosave('已替换颜色');
   renderAll();
 }
 
@@ -579,9 +628,9 @@ async function syncWebDav() {
   }
 }
 
-function autosave() {
+function autosave(statusText = '已自动恢复点') {
   localStorage.setItem('pindou.autosave', serializeProject(state.project));
-  setSaveState('已自动恢复点');
+  setSaveState(statusText);
 }
 
 function restoreAutosave() {
@@ -612,6 +661,10 @@ function saveWebDavSettings() {
 
 function getSelectedBead() {
   return state.palette.find((bead) => bead.id === state.selectedColorId) ?? null;
+}
+
+function getBeadById(colorId) {
+  return state.palette.find((bead) => bead.id === colorId) ?? null;
 }
 
 function brandLabel(brandKey) {

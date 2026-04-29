@@ -302,6 +302,10 @@ label {
   content: "P";
 }
 
+.tool-grid button[data-tool="select"]::before {
+  content: "S";
+}
+
 .tool-grid button[data-tool="eraser"]::before {
   content: "E";
 }
@@ -488,6 +492,23 @@ label {
   background:
     linear-gradient(90deg, rgba(154, 122, 162, 0.12), transparent 62%),
     #fff;
+}
+
+.replace-source {
+  display: grid;
+  gap: 4px;
+  min-height: 46px;
+  padding: 9px;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.replace-source span:first-child {
+  font-weight: 700;
 }
 
 .color-chip {

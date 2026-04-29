@@ -56,7 +56,8 @@
           <section>
             <h2>工具</h2>
             <div class="tool-grid" id="toolGrid">
-              <button type="button" data-tool="brush" class="active">画笔</button>
+              <button type="button" data-tool="select" class="active">选择</button>
+              <button type="button" data-tool="brush">画笔</button>
               <button type="button" data-tool="eraser">橡皮</button>
               <button type="button" data-tool="eyedropper">吸管</button>
               <button type="button" data-tool="fill">填充</button>
@@ -107,8 +108,15 @@
           <section>
             <h2>库存与替换</h2>
             <label>禁用当前色 <input id="disableCurrent" type="checkbox"></label>
-            <label>替换为选中色 <select id="replaceFrom"></select></label>
-            <button id="replaceColorBtn" type="button" class="wide">替换颜色</button>
+            <div class="replace-source" id="replaceSource">先用选择工具点击画布颜色</div>
+            <label>替换范围
+              <select id="replaceScope">
+                <option value="all">全画布同色</option>
+                <option value="connected">只替换选中连通区域（背景）</option>
+              </select>
+            </label>
+            <p class="hint">先点击画布选择要替换的颜色，再在色卡中点目标色。</p>
+            <button id="replaceColorBtn" type="button" class="wide">替换为当前色卡颜色</button>
           </section>
 
           <section>
