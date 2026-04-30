@@ -23,34 +23,62 @@
         </div>
 
         <nav class="toolbar" aria-label="主要工具">
-          <button id="importImageBtn" type="button" class="command-primary">导入图片</button>
-          <button id="openProjectBtn" type="button">打开工程</button>
-          <button id="saveProjectBtn" type="button">保存 .pindou</button>
-          <button id="clearCanvasBtn" type="button">清空画布</button>
-          <button id="undoBtn" type="button" title="撤销">撤销</button>
-          <button id="redoBtn" type="button" title="重做">重做</button>
-          <select id="viewMode" aria-label="视图模式">
-            <option value="pixel">像素</option>
-            <option value="blueprint">蓝图</option>
-            <option value="board">分板</option>
-            <option value="steps">制作步骤</option>
-            <option value="source">原图</option>
-          </select>
-          <label class="zoom-control">缩放 <input id="zoomRange" type="range" min="8" max="30" value="16"></label>
+          <div class="toolbar-group file-actions" aria-label="文件操作">
+            <button id="importImageBtn" type="button" class="command-primary">导入</button>
+            <details class="project-menu">
+              <summary>工程</summary>
+              <div class="project-menu-panel">
+                <button id="openProjectBtn" type="button">打开工程</button>
+                <button id="saveProjectBtn" type="button">保存工程</button>
+                <button id="clearCanvasBtn" type="button" class="danger-action">清空画布</button>
+              </div>
+            </details>
+          </div>
+          <div class="toolbar-group edit-actions" aria-label="编辑操作">
+            <button id="undoBtn" type="button" title="撤销">撤销</button>
+            <button id="redoBtn" type="button" title="重做">重做</button>
+          </div>
+          <div class="toolbar-group view-actions" aria-label="视图和缩放">
+            <select id="viewMode" aria-label="视图模式">
+              <option value="pixel">像素</option>
+              <option value="blueprint">蓝图</option>
+              <option value="board">分板</option>
+              <option value="steps">制作步骤</option>
+              <option value="source">原图</option>
+            </select>
+            <label class="zoom-control">缩放 <input id="zoomRange" type="range" min="8" max="30" value="16"></label>
+          </div>
         </nav>
       </header>
 
       <main class="editor">
         <aside class="panel left-panel" aria-label="项目面板">
           <section>
-            <h2>生成助手</h2>
+            <h2>图片与网格</h2>
             <div class="control-grid">
               <label>宽格数 <input id="gridWidth" type="number" min="8" max="220" value="48"></label>
               <label>高格数 <input id="gridHeight" type="number" min="8" max="220" value="48"></label>
               <label>豆径 <select id="beadSize"><option value="5">5mm</option><option value="2.6">2.6mm</option></select></label>
               <label>模式 <select id="pixelMode"><option value="dominant">区域主导色</option><option value="nearest">最近邻</option></select></label>
             </div>
-            <button id="pixelizeBtn" type="button" class="primary wide">生成拼豆图</button>
+            <p class="hint">导入图片后会自动生成拼豆图；修改格数或模式时会按当前剪裁重新生成。</p>
+          </section>
+
+          <section id="cropSection" class="crop-section" hidden>
+            <h2>图片剪裁</h2>
+            <canvas id="cropCanvas" class="crop-canvas" width="280" height="190"></canvas>
+            <div class="crop-summary" id="cropSummary">全图</div>
+            <div class="control-grid crop-controls">
+              <label>横向 <input id="cropX" type="range" min="0" max="1000" value="0"></label>
+              <label>纵向 <input id="cropY" type="range" min="0" max="1000" value="0"></label>
+              <label>宽度 <input id="cropWidth" type="range" min="50" max="1000" value="1000"></label>
+              <label>高度 <input id="cropHeight" type="range" min="50" max="1000" value="1000"></label>
+            </div>
+            <div class="button-row">
+              <button id="cropFullBtn" type="button">全图</button>
+              <button id="cropSquareBtn" type="button">正方形</button>
+              <button id="applyCropBtn" type="button" class="primary">应用剪裁</button>
+            </div>
           </section>
 
           <section>
@@ -61,6 +89,38 @@
               <button type="button" data-tool="eraser">橡皮</button>
               <button type="button" data-tool="eyedropper">吸管</button>
               <button type="button" data-tool="fill">填充</button>
+            </div>
+          </section>
+
+          <section>
+            <h2>艺术字</h2>
+            <label>文字 <input id="artTextInput" type="text" maxlength="24" placeholder="整点好玩的"></label>
+            <div class="control-grid art-text-controls">
+              <label>X <input id="artTextX" type="number" min="0" value="2"></label>
+              <label>Y <input id="artTextY" type="number" min="0" value="8"></label>
+              <label>字高 <input id="artTextSize" type="number" min="4" max="160" value="14"></label>
+              <label>字体
+                <select id="artTextFont">
+                  <option value='"Microsoft YaHei", "PingFang SC", sans-serif'>黑体</option>
+                  <option value='KaiTi, "STKaiti", serif'>手写</option>
+                  <option value='SimSun, "Songti SC", serif'>宋体</option>
+                  <option value='Impact, "Arial Black", sans-serif'>夸张</option>
+                </select>
+              </label>
+              <label>粗细
+                <select id="artTextWeight">
+                  <option value="700">粗</option>
+                  <option value="400">常规</option>
+                  <option value="900">特粗</option>
+                </select>
+              </label>
+              <label class="inline-check">倾斜 <input id="artTextItalic" type="checkbox"></label>
+              <label class="inline-check">描边 <input id="artTextOutline" type="checkbox" checked></label>
+            </div>
+            <div class="button-row">
+              <button id="previewArtTextBtn" type="button">预览</button>
+              <button id="applyArtTextBtn" type="button" class="primary">写入画布</button>
+              <button id="clearArtTextBtn" type="button">清除</button>
             </div>
           </section>
 
@@ -88,8 +148,8 @@
               <span><b id="metricSteps">0</b><small>步骤</small></span>
             </div>
             <div class="canvas-actions">
-              <button id="exportPngBtn" type="button">导出 PNG</button>
-              <button id="exportStepsBtn" type="button">导出步骤 JSON</button>
+              <button id="exportPngBtn" type="button" title="导出 PNG">PNG</button>
+              <button id="exportStepsBtn" type="button" title="导出步骤 JSON">JSON</button>
             </div>
           </div>
           <div class="canvas-scroll" id="canvasScroll">

@@ -3,6 +3,8 @@ import { createGrid, fillConnected, paintCell, replaceColor, replaceConnectedCol
 import { createProject, parseProject, serializeProject } from './core/project.js';
 import { createMakingSteps, createMaterialList } from './core/exporters.js';
 
+const BEAD_CATALOG = mergePalettes();
+
 const dom = {
   projectName: document.querySelector('#projectName'),
   saveState: document.querySelector('#saveState'),
@@ -18,8 +20,28 @@ const dom = {
   gridHeight: document.querySelector('#gridHeight'),
   beadSize: document.querySelector('#beadSize'),
   pixelMode: document.querySelector('#pixelMode'),
-  pixelizeBtn: document.querySelector('#pixelizeBtn'),
+  cropSection: document.querySelector('#cropSection'),
+  cropCanvas: document.querySelector('#cropCanvas'),
+  cropSummary: document.querySelector('#cropSummary'),
+  cropX: document.querySelector('#cropX'),
+  cropY: document.querySelector('#cropY'),
+  cropWidth: document.querySelector('#cropWidth'),
+  cropHeight: document.querySelector('#cropHeight'),
+  cropFullBtn: document.querySelector('#cropFullBtn'),
+  cropSquareBtn: document.querySelector('#cropSquareBtn'),
+  applyCropBtn: document.querySelector('#applyCropBtn'),
   toolGrid: document.querySelector('#toolGrid'),
+  artTextInput: document.querySelector('#artTextInput'),
+  artTextX: document.querySelector('#artTextX'),
+  artTextY: document.querySelector('#artTextY'),
+  artTextSize: document.querySelector('#artTextSize'),
+  artTextFont: document.querySelector('#artTextFont'),
+  artTextWeight: document.querySelector('#artTextWeight'),
+  artTextItalic: document.querySelector('#artTextItalic'),
+  artTextOutline: document.querySelector('#artTextOutline'),
+  previewArtTextBtn: document.querySelector('#previewArtTextBtn'),
+  applyArtTextBtn: document.querySelector('#applyArtTextBtn'),
+  clearArtTextBtn: document.querySelector('#clearArtTextBtn'),
   sourceLayerState: document.querySelector('#sourceLayerState'),
   gridLayerState: document.querySelector('#gridLayerState'),
   historyCount: document.querySelector('#historyCount'),
@@ -53,9 +75,10 @@ const dom = {
 };
 
 const ctx = dom.canvas.getContext('2d');
+const cropCtx = dom.cropCanvas.getContext('2d');
 const state = {
   project: createProject({ width: 48, height: 48, paletteBrands: ['MARD'] }),
-  palette: mergePalettes(),
+  palette: mergePalettes(['MARD']),
   selectedColorId: 'MARD:M-R01',
   selectedSourceColorId: null,
   selectedCell: null,
@@ -65,6 +88,9 @@ const state = {
   undoStack: [],
   redoStack: [],
   sourceImage: null,
+  cropInteraction: null,
+  cropPreviewFrame: null,
+  textPreview: null,
   pointerDown: false,
   activeStep: 0
 };
@@ -72,6 +98,7 @@ const state = {
 init();
 
 function init() {
+  applyInitialViewportDefaults();
   bindEvents();
   loadWebDavSettings();
   restoreAutosave();
@@ -85,13 +112,13 @@ function bindEvents() {
   dom.clearCanvasBtn.addEventListener('click', clearCanvas);
   dom.imageInput.addEventListener('change', handleImageInput);
   dom.projectInput.addEventListener('change', handleProjectInput);
-  dom.pixelizeBtn.addEventListener('click', pixelizeSourceImage);
   dom.projectName.addEventListener('input', () => {
     state.project.name = dom.projectName.value.trim() || '未命名拼豆工程';
     autosave('已自动保存项目名');
   });
-  dom.gridWidth.addEventListener('change', resizeEmptyGrid);
-  dom.gridHeight.addEventListener('change', resizeEmptyGrid);
+  dom.gridWidth.addEventListener('change', handleGridSizeChange);
+  dom.gridHeight.addEventListener('change', handleGridSizeChange);
+  dom.pixelMode.addEventListener('change', handlePixelModeChange);
   dom.beadSize.addEventListener('change', () => {
     state.project.beadSizeMm = Number(dom.beadSize.value);
     autosave('豆径设置已更新');
@@ -133,6 +160,33 @@ function bindEvents() {
   dom.webdavSyncBtn.addEventListener('click', syncWebDav);
   dom.webdavUrl.addEventListener('change', saveWebDavSettings);
   dom.webdavUser.addEventListener('change', saveWebDavSettings);
+
+  for (const input of [dom.cropX, dom.cropY, dom.cropWidth, dom.cropHeight]) {
+    input.addEventListener('input', handleCropInput);
+  }
+  dom.cropFullBtn.addEventListener('click', () => setCrop({ x: 0, y: 0, width: 1, height: 1 }));
+  dom.cropSquareBtn.addEventListener('click', setSquareCrop);
+  dom.applyCropBtn.addEventListener('click', applyCrop);
+  dom.cropCanvas.addEventListener('pointerdown', handleCropPointerDown);
+  dom.cropCanvas.addEventListener('pointermove', handleCropPointerMove);
+  dom.cropCanvas.addEventListener('pointerup', endCropInteraction);
+  dom.cropCanvas.addEventListener('pointercancel', endCropInteraction);
+
+  for (const input of [
+    dom.artTextInput,
+    dom.artTextX,
+    dom.artTextY,
+    dom.artTextSize,
+    dom.artTextFont,
+    dom.artTextWeight,
+    dom.artTextItalic,
+    dom.artTextOutline
+  ]) {
+    input.addEventListener('input', updateArtTextPreviewIfActive);
+  }
+  dom.previewArtTextBtn.addEventListener('click', previewArtText);
+  dom.applyArtTextBtn.addEventListener('click', applyArtText);
+  dom.clearArtTextBtn.addEventListener('click', clearArtTextPreview);
 }
 
 function renderAll() {
@@ -140,6 +194,8 @@ function renderAll() {
   state.palette = mergePalettes(state.project.paletteBrands);
   renderProjectFields();
   renderTools();
+  renderCropControls();
+  renderArtTextControls();
   renderBrandFilters();
   renderPalette();
   renderReplacement();
@@ -174,16 +230,7 @@ function renderBrandFilters() {
     button.setAttribute('aria-pressed', state.project.paletteBrands[0] === brandKey ? 'true' : 'false');
     button.innerHTML = `<span>${brandLabel(brandKey)}</span><small>${DOMESTIC_PALETTES[brandKey].length} 色</small>`;
     button.addEventListener('click', () => {
-      state.project.paletteBrands = [brandKey];
-      state.palette = mergePalettes(state.project.paletteBrands);
-      if (!state.palette.some((bead) => bead.id === state.selectedColorId)) {
-        state.selectedColorId = state.palette[0]?.id ?? null;
-      }
-      autosave('已切换色卡品牌');
-      renderBrandFilters();
-      renderPalette();
-      renderMaterials();
-      renderStatus();
+      switchPaletteBrand(brandKey);
     });
     dom.brandFilters.append(button);
   }
@@ -239,26 +286,28 @@ function renderCanvas() {
   updateCanvasLabels();
 
   if (state.view === 'source' && state.sourceImage) {
-    ctx.drawImage(state.sourceImage, 0, 0, width, height);
+    const crop = getSourceCropRect();
+    ctx.drawImage(state.sourceImage, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
     drawGridLines(grid, width, height);
     return;
   }
 
   drawCanvasBackground(width, height);
-  const step = state.view === 'steps' ? createMakingSteps(grid, state.palette)[state.activeStep] : null;
+  const step = state.view === 'steps' ? createMakingSteps(grid, getDisplayPalette())[state.activeStep] : null;
   const highlighted = new Set(step?.cells.map((cell) => `${cell.x},${cell.y}`) ?? []);
 
   for (let y = 0; y < grid.height; y += 1) {
     for (let x = 0; x < grid.width; x += 1) {
       const colorId = grid.cells[y][x];
       if (!colorId) continue;
-      const bead = state.palette.find((item) => item.id === colorId);
+      const bead = getBeadById(colorId);
       const alpha = highlighted.size > 0 && !highlighted.has(`${x},${y}`) ? 0.22 : 1;
       drawBead(x, y, bead, colorId, alpha);
     }
   }
 
   if (state.view === 'board') drawBoardLines(grid);
+  drawArtTextPreview();
   drawSelectedCell();
   drawGridLines(grid, width, height);
 }
@@ -294,7 +343,7 @@ function drawBead(x, y, bead, colorId, alpha = 1) {
   const size = state.zoom;
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = bead ? beadCssColor(bead) : '#111';
+  ctx.fillStyle = bead ? beadCssColor(bead) : '#aeb8bf';
   if (state.view === 'blueprint' || state.zoom < 11) {
     ctx.fillRect(left + 1, top + 1, size - 2, size - 2);
   } else {
@@ -360,7 +409,7 @@ function drawSelectedCell() {
 }
 
 function renderMaterials() {
-  const materials = createMaterialList(state.project.grid, state.palette);
+  const materials = createMaterialList(state.project.grid, getDisplayPalette());
   dom.materialList.innerHTML = '';
   if (materials.length === 0) {
     dom.materialList.innerHTML = '<p class="hint">生成或绘制后显示每色数量。</p>';
@@ -376,7 +425,7 @@ function renderMaterials() {
 
 function renderStatus() {
   const grid = state.project.grid;
-  const materials = createMaterialList(grid, state.palette);
+  const materials = createMaterialList(grid, getDisplayPalette());
   const beadCount = materials.reduce((sum, item) => sum + item.count, 0);
   const boardColumns = Math.ceil(grid.width / state.project.board.width);
   const boardRows = Math.ceil(grid.height / state.project.board.height);
@@ -387,11 +436,395 @@ function renderStatus() {
   dom.statusColor.textContent = selected ? `${selected.brand} ${selected.code} ${selected.name}` : '未选色';
   dom.statusBoard.textContent = `分板 ${boardColumns} x ${boardRows}`;
   dom.metricGrid.textContent = `${grid.width} x ${grid.height}`;
-  dom.metricPalette.textContent = String(
-    state.palette.filter((bead) => !state.project.disabledColorIds.includes(bead.id)).length
-  );
-  dom.metricSteps.textContent = String(createMakingSteps(grid, state.palette).length);
+  dom.metricPalette.textContent = `${state.palette.filter((bead) => !state.project.disabledColorIds.includes(bead.id)).length} 色`;
+  dom.metricSteps.textContent = `${createMakingSteps(grid, getDisplayPalette()).length} 步`;
   renderProjectFields();
+}
+
+function applyInitialViewportDefaults() {
+  if (!window.matchMedia?.('(max-width: 640px)').matches) return;
+  state.zoom = 10;
+  dom.zoomRange.value = String(state.zoom);
+}
+
+function switchPaletteBrand(brandKey) {
+  if (!DOMESTIC_PALETTES[brandKey] || state.project.paletteBrands[0] === brandKey) return;
+
+  const nextPalette = mergePalettes([brandKey]);
+  const nextPaletteIds = new Set(nextPalette.map((bead) => bead.id));
+  const nextDisabled = state.project.disabledColorIds.filter((colorId) => nextPaletteIds.has(colorId));
+  const previousSelected = getBeadById(state.selectedColorId);
+  const previousSourceColorId = state.selectedSourceColorId;
+  const remapped = remapGridToPalette(state.project.grid, nextPalette, nextDisabled);
+
+  if (remapped.changed) {
+    pushUndo();
+    state.project.grid = remapped.grid;
+    state.redoStack = [];
+  }
+
+  state.project.paletteBrands = [brandKey];
+  state.project.disabledColorIds = nextDisabled;
+  state.palette = nextPalette;
+  state.selectedColorId = previousSelected
+    ? nearestPaletteColorId(previousSelected.rgb, nextPalette, nextDisabled)
+    : nextPalette[0]?.id ?? null;
+  state.selectedSourceColorId = previousSourceColorId
+    ? remapped.colorMap.get(previousSourceColorId) ?? remapColorIdToPalette(previousSourceColorId, nextPalette, nextDisabled)
+    : null;
+
+  autosave(remapped.changed ? `已切换到 ${brandLabel(brandKey)} 并重配画布颜色` : `已切换到 ${brandLabel(brandKey)} 色卡`);
+  renderAll();
+}
+
+function remapGridToPalette(grid, targetPalette, disabledColorIds = []) {
+  const colorMap = new Map();
+  let changed = false;
+  const cells = grid.cells.map((row) => row.map((colorId) => {
+    if (!colorId) return colorId;
+    if (!colorMap.has(colorId)) {
+      colorMap.set(colorId, remapColorIdToPalette(colorId, targetPalette, disabledColorIds) ?? colorId);
+    }
+    const nextColorId = colorMap.get(colorId);
+    if (nextColorId !== colorId) changed = true;
+    return nextColorId;
+  }));
+
+  return { grid: { ...grid, cells }, changed, colorMap };
+}
+
+function remapColorIdToPalette(colorId, targetPalette, disabledColorIds = []) {
+  if (targetPalette.some((bead) => bead.id === colorId)) return colorId;
+  const bead = getBeadById(colorId);
+  return bead ? nearestPaletteColorId(bead.rgb, targetPalette, disabledColorIds) : null;
+}
+
+function nearestPaletteColorId(rgb, palette, disabledColorIds = []) {
+  try {
+    return findNearestBead(rgb, palette, { disabledColorIds }).id;
+  } catch {
+    return palette[0]?.id ?? null;
+  }
+}
+
+function renderCropControls() {
+  const hasSource = Boolean(state.sourceImage);
+  dom.cropSection.hidden = !hasSource;
+  if (!hasSource) {
+    state.cropPreviewFrame = null;
+    return;
+  }
+
+  state.project.crop = normalizeCrop(state.project.crop);
+  syncCropInputs(state.project.crop);
+  renderCropSummary();
+  renderCropPreview();
+}
+
+function syncCropInputs(crop) {
+  dom.cropX.value = String(Math.round(crop.x * 1000));
+  dom.cropY.value = String(Math.round(crop.y * 1000));
+  dom.cropWidth.value = String(Math.round(crop.width * 1000));
+  dom.cropHeight.value = String(Math.round(crop.height * 1000));
+}
+
+function renderCropSummary() {
+  const crop = normalizeCrop(state.project.crop);
+  const rect = getSourceCropRect();
+  dom.cropSummary.textContent = `位置 ${Math.round(crop.x * 100)}%, ${Math.round(crop.y * 100)}% / 尺寸 ${rect.width} x ${rect.height}px`;
+}
+
+function renderCropPreview() {
+  const image = state.sourceImage;
+  cropCtx.clearRect(0, 0, dom.cropCanvas.width, dom.cropCanvas.height);
+  cropCtx.fillStyle = '#f7f4f8';
+  cropCtx.fillRect(0, 0, dom.cropCanvas.width, dom.cropCanvas.height);
+  if (!image) return;
+
+  const imageRect = fitRect(image.naturalWidth, image.naturalHeight, dom.cropCanvas.width, dom.cropCanvas.height);
+  cropCtx.drawImage(image, imageRect.x, imageRect.y, imageRect.width, imageRect.height);
+
+  const crop = normalizeCrop(state.project.crop);
+  const cropRect = {
+    x: imageRect.x + crop.x * imageRect.width,
+    y: imageRect.y + crop.y * imageRect.height,
+    width: crop.width * imageRect.width,
+    height: crop.height * imageRect.height
+  };
+  state.cropPreviewFrame = { imageRect, cropRect };
+
+  cropCtx.fillStyle = 'rgba(20, 16, 24, 0.56)';
+  cropCtx.fillRect(imageRect.x, imageRect.y, imageRect.width, cropRect.y - imageRect.y);
+  cropCtx.fillRect(imageRect.x, cropRect.y + cropRect.height, imageRect.width, imageRect.y + imageRect.height - cropRect.y - cropRect.height);
+  cropCtx.fillRect(imageRect.x, cropRect.y, cropRect.x - imageRect.x, cropRect.height);
+  cropCtx.fillRect(cropRect.x + cropRect.width, cropRect.y, imageRect.x + imageRect.width - cropRect.x - cropRect.width, cropRect.height);
+
+  cropCtx.strokeStyle = '#ffffff';
+  cropCtx.lineWidth = 2;
+  cropCtx.strokeRect(cropRect.x + 0.5, cropRect.y + 0.5, cropRect.width - 1, cropRect.height - 1);
+  cropCtx.fillStyle = '#ffffff';
+  cropCtx.fillRect(cropRect.x + cropRect.width - 10, cropRect.y + cropRect.height - 10, 10, 10);
+  cropCtx.strokeStyle = '#9a7aa2';
+  cropCtx.strokeRect(cropRect.x + cropRect.width - 10, cropRect.y + cropRect.height - 10, 10, 10);
+}
+
+function handleCropInput() {
+  const crop = normalizeCrop({
+    x: Number(dom.cropX.value) / 1000,
+    y: Number(dom.cropY.value) / 1000,
+    width: Number(dom.cropWidth.value) / 1000,
+    height: Number(dom.cropHeight.value) / 1000
+  });
+  setCrop(crop, '剪裁预览已更新，点击应用剪裁');
+}
+
+function setCrop(crop, statusText = '剪裁预览已更新') {
+  state.project.crop = normalizeCrop(crop);
+  syncCropInputs(state.project.crop);
+  renderCropSummary();
+  renderCropPreview();
+  setSaveState(statusText);
+}
+
+function setSquareCrop() {
+  if (!state.sourceImage) return;
+  const side = Math.min(state.sourceImage.naturalWidth, state.sourceImage.naturalHeight);
+  const width = side / state.sourceImage.naturalWidth;
+  const height = side / state.sourceImage.naturalHeight;
+  setCrop({ x: (1 - width) / 2, y: (1 - height) / 2, width, height }, '已切到居中正方形剪裁');
+}
+
+function applyCrop() {
+  if (!state.sourceImage) {
+    setSaveState('请先导入图片');
+    return;
+  }
+  pixelizeSourceImage('已应用剪裁并生成拼豆图');
+}
+
+function handleCropPointerDown(event) {
+  if (!state.sourceImage || !state.cropPreviewFrame) return;
+  const point = cropCanvasPoint(event);
+  const { imageRect, cropRect } = state.cropPreviewFrame;
+  const nearHandle = point.x >= cropRect.x + cropRect.width - 18
+    && point.x <= cropRect.x + cropRect.width + 8
+    && point.y >= cropRect.y + cropRect.height - 18
+    && point.y <= cropRect.y + cropRect.height + 8;
+  const inside = point.x >= cropRect.x && point.x <= cropRect.x + cropRect.width
+    && point.y >= cropRect.y && point.y <= cropRect.y + cropRect.height;
+
+  if (!inside && !nearHandle) {
+    const crop = normalizeCrop(state.project.crop);
+    const centerX = clamp((point.x - imageRect.x) / imageRect.width, 0, 1);
+    const centerY = clamp((point.y - imageRect.y) / imageRect.height, 0, 1);
+    crop.x = clamp(centerX - crop.width / 2, 0, 1 - crop.width);
+    crop.y = clamp(centerY - crop.height / 2, 0, 1 - crop.height);
+    setCrop(crop);
+  }
+
+  state.cropInteraction = {
+    mode: nearHandle ? 'resize' : 'move',
+    startPoint: cropCanvasPoint(event),
+    startCrop: normalizeCrop(state.project.crop),
+    imageRect
+  };
+  dom.cropCanvas.setPointerCapture(event.pointerId);
+}
+
+function handleCropPointerMove(event) {
+  if (!state.cropInteraction) return;
+  const point = cropCanvasPoint(event);
+  const { mode, startPoint, startCrop, imageRect } = state.cropInteraction;
+  const dx = (point.x - startPoint.x) / imageRect.width;
+  const dy = (point.y - startPoint.y) / imageRect.height;
+  const next = { ...startCrop };
+
+  if (mode === 'resize') {
+    next.width = clamp(startCrop.width + dx, 0.05, 1 - startCrop.x);
+    next.height = clamp(startCrop.height + dy, 0.05, 1 - startCrop.y);
+  } else {
+    next.x = clamp(startCrop.x + dx, 0, 1 - startCrop.width);
+    next.y = clamp(startCrop.y + dy, 0, 1 - startCrop.height);
+  }
+
+  setCrop(next, '剪裁预览已更新，点击应用剪裁');
+}
+
+function endCropInteraction(event) {
+  if (state.cropInteraction && dom.cropCanvas.hasPointerCapture(event.pointerId)) {
+    dom.cropCanvas.releasePointerCapture(event.pointerId);
+  }
+  state.cropInteraction = null;
+}
+
+function cropCanvasPoint(event) {
+  const rect = dom.cropCanvas.getBoundingClientRect();
+  const scaleX = dom.cropCanvas.width / rect.width;
+  const scaleY = dom.cropCanvas.height / rect.height;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  };
+}
+
+function getSourceCropRect() {
+  const image = state.sourceImage;
+  if (!image) return { x: 0, y: 0, width: 1, height: 1 };
+  const crop = normalizeCrop(state.project.crop);
+  const x = Math.round(crop.x * image.naturalWidth);
+  const y = Math.round(crop.y * image.naturalHeight);
+  const width = Math.max(1, Math.round(crop.width * image.naturalWidth));
+  const height = Math.max(1, Math.round(crop.height * image.naturalHeight));
+  return {
+    x: clamp(x, 0, image.naturalWidth - 1),
+    y: clamp(y, 0, image.naturalHeight - 1),
+    width: Math.min(width, image.naturalWidth - x),
+    height: Math.min(height, image.naturalHeight - y)
+  };
+}
+
+function normalizeCrop(crop) {
+  const next = {
+    x: Number(crop?.x ?? 0),
+    y: Number(crop?.y ?? 0),
+    width: Number(crop?.width ?? 1),
+    height: Number(crop?.height ?? 1)
+  };
+  next.width = clamp(next.width, 0.05, 1);
+  next.height = clamp(next.height, 0.05, 1);
+  next.x = clamp(next.x, 0, 1 - next.width);
+  next.y = clamp(next.y, 0, 1 - next.height);
+  return next;
+}
+
+function fitRect(sourceWidth, sourceHeight, targetWidth, targetHeight) {
+  const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const width = sourceWidth * scale;
+  const height = sourceHeight * scale;
+  return {
+    x: (targetWidth - width) / 2,
+    y: (targetHeight - height) / 2,
+    width,
+    height
+  };
+}
+
+function renderArtTextControls() {
+  const grid = state.project.grid;
+  dom.artTextX.max = String(Math.max(0, grid.width - 1));
+  dom.artTextY.max = String(Math.max(0, grid.height - 1));
+  dom.artTextSize.max = String(Math.max(4, grid.height));
+  dom.artTextX.value = String(clamp(Number(dom.artTextX.value), 0, Math.max(0, grid.width - 1)));
+  dom.artTextY.value = String(clamp(Number(dom.artTextY.value), 0, Math.max(0, grid.height - 1)));
+  dom.artTextSize.value = String(clamp(Number(dom.artTextSize.value), 4, Math.max(4, grid.height)));
+}
+
+function previewArtText() {
+  const cells = buildArtTextCells();
+  state.textPreview = cells.length > 0 ? { cells } : null;
+  setSaveState(cells.length > 0 ? '艺术字预览中，满意后写入画布' : '先输入文字并选择颜色');
+  renderCanvas();
+}
+
+function updateArtTextPreviewIfActive() {
+  if (state.textPreview) previewArtText();
+}
+
+function clearArtTextPreview() {
+  state.textPreview = null;
+  setSaveState('艺术字预览已清除');
+  renderCanvas();
+}
+
+function applyArtText() {
+  const cells = state.textPreview?.cells ?? buildArtTextCells();
+  if (cells.length === 0) {
+    setSaveState('先输入文字并选择颜色');
+    return;
+  }
+
+  pushUndo();
+  const gridCells = state.project.grid.cells.map((row) => [...row]);
+  for (const cell of cells) {
+    gridCells[cell.y][cell.x] = cell.colorId;
+  }
+  state.project.grid = { ...state.project.grid, cells: gridCells };
+  state.textPreview = null;
+  state.redoStack = [];
+  autosave('艺术字已写入画布');
+  renderAll();
+}
+
+function buildArtTextCells() {
+  const text = dom.artTextInput.value.trim();
+  if (!text || !state.selectedColorId) return [];
+
+  const grid = state.project.grid;
+  const scale = 4;
+  const width = grid.width * scale;
+  const height = grid.height * scale;
+  const x = clamp(Number(dom.artTextX.value), 0, Math.max(0, grid.width - 1)) * scale;
+  const y = clamp(Number(dom.artTextY.value), 0, Math.max(0, grid.height - 1)) * scale;
+  const fontSize = clamp(Number(dom.artTextSize.value), 4, Math.max(4, grid.height)) * scale;
+  const fontStyle = dom.artTextItalic.checked ? 'italic ' : '';
+  const font = `${fontStyle}${dom.artTextWeight.value} ${fontSize}px ${dom.artTextFont.value}`;
+  const cellMap = new Map();
+
+  if (dom.artTextOutline.checked) {
+    const outlineColorId = nearestPaletteColorId([35, 36, 38], state.palette, state.project.disabledColorIds) ?? state.selectedColorId;
+    const outlineCtx = createTextMaskContext(width, height, font);
+    outlineCtx.lineWidth = Math.max(scale, fontSize * 0.12);
+    outlineCtx.strokeText(text, x, y);
+    collectTextCells(outlineCtx, grid, scale, outlineColorId, cellMap);
+  }
+
+  const fillCtx = createTextMaskContext(width, height, font);
+  fillCtx.fillText(text, x, y);
+  collectTextCells(fillCtx, grid, scale, state.selectedColorId, cellMap);
+
+  return [...cellMap.entries()].map(([key, colorId]) => {
+    const [cellX, cellY] = key.split(',').map(Number);
+    return { x: cellX, y: cellY, colorId };
+  });
+}
+
+function createTextMaskContext(width, height, font) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const maskCtx = canvas.getContext('2d', { willReadFrequently: true });
+  maskCtx.fillStyle = '#000';
+  maskCtx.strokeStyle = '#000';
+  maskCtx.lineJoin = 'round';
+  maskCtx.lineCap = 'round';
+  maskCtx.textBaseline = 'top';
+  maskCtx.font = font;
+  return maskCtx;
+}
+
+function collectTextCells(maskCtx, grid, scale, colorId, cellMap) {
+  const data = maskCtx.getImageData(0, 0, grid.width * scale, grid.height * scale).data;
+  const coverageThreshold = Math.max(1, Math.floor(scale * scale * 0.18));
+
+  for (let y = 0; y < grid.height; y += 1) {
+    for (let x = 0; x < grid.width; x += 1) {
+      let coverage = 0;
+      for (let subY = 0; subY < scale; subY += 1) {
+        for (let subX = 0; subX < scale; subX += 1) {
+          const index = (((y * scale + subY) * grid.width * scale) + (x * scale + subX)) * 4 + 3;
+          if (data[index] > 40) coverage += 1;
+        }
+      }
+      if (coverage >= coverageThreshold) cellMap.set(`${x},${y}`, colorId);
+    }
+  }
+}
+
+function drawArtTextPreview() {
+  if (!state.textPreview?.cells.length) return;
+  for (const cell of state.textPreview.cells) {
+    drawBead(cell.x, cell.y, getBeadById(cell.colorId), cell.colorId, 0.78);
+  }
 }
 
 async function handleImageInput(event) {
@@ -401,6 +834,9 @@ async function handleImageInput(event) {
   const image = await loadImage(dataUrl);
   state.sourceImage = image;
   state.project.source = { name: file.name, type: file.type, dataUrl, width: image.naturalWidth, height: image.naturalHeight };
+  state.project.crop = { x: 0, y: 0, width: 1, height: 1 };
+  event.target.value = '';
+  renderCropControls();
   pixelizeSourceImage('已导入并生成拼豆图');
 }
 
@@ -413,7 +849,10 @@ async function handleProjectInput(event) {
   state.redoStack = [];
   state.palette = mergePalettes(state.project.paletteBrands);
   if (state.project.source?.dataUrl) state.sourceImage = await loadImage(state.project.source.dataUrl);
+  else state.sourceImage = null;
   state.selectedColorId = state.palette[0]?.id ?? null;
+  state.textPreview = null;
+  event.target.value = '';
   autosave('工程已打开');
   renderAll();
 }
@@ -425,12 +864,13 @@ function pixelizeSourceImage(successMessage = '已生成拼豆图') {
   }
   const width = clamp(Number(dom.gridWidth.value), 8, 220);
   const height = clamp(Number(dom.gridHeight.value), 8, 220);
+  const crop = getSourceCropRect();
   const offscreen = document.createElement('canvas');
   offscreen.width = width;
   offscreen.height = height;
   const offscreenCtx = offscreen.getContext('2d', { willReadFrequently: true });
   offscreenCtx.imageSmoothingEnabled = dom.pixelMode.value !== 'nearest';
-  offscreenCtx.drawImage(state.sourceImage, 0, 0, width, height);
+  offscreenCtx.drawImage(state.sourceImage, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
   const data = offscreenCtx.getImageData(0, 0, width, height).data;
   const disabledColorIds = state.project.disabledColorIds;
   const grid = createGrid(width, height, null);
@@ -450,18 +890,33 @@ function pixelizeSourceImage(successMessage = '已生成拼豆图') {
   state.tool = 'select';
   state.selectedCell = null;
   state.selectedSourceColorId = null;
+  state.textPreview = null;
+  state.redoStack = [];
   autosave(successMessage);
   renderAll();
 }
 
-function resizeEmptyGrid() {
+function handleGridSizeChange() {
   const width = clamp(Number(dom.gridWidth.value), 8, 220);
   const height = clamp(Number(dom.gridHeight.value), 8, 220);
   if (state.project.grid.width === width && state.project.grid.height === height) return;
+  if (state.sourceImage) {
+    pixelizeSourceImage('已按新尺寸生成拼豆图');
+    return;
+  }
   pushUndo();
   state.project.grid = createGrid(width, height, null);
+  state.textPreview = null;
   autosave('画布尺寸已重置');
   renderAll();
+}
+
+function handlePixelModeChange() {
+  if (state.sourceImage) {
+    pixelizeSourceImage('已按新模式生成拼豆图');
+  } else {
+    setSaveState('导入图片后会使用当前生成模式');
+  }
 }
 
 function clearCanvas() {
@@ -472,6 +927,7 @@ function clearCanvas() {
   state.activeStep = 0;
   state.selectedCell = null;
   state.selectedSourceColorId = null;
+  state.textPreview = null;
   autosave('画布已清空');
   renderAll();
 }
@@ -600,8 +1056,8 @@ function exportSteps() {
   const payload = {
     project: state.project.name,
     grid: { width: state.project.grid.width, height: state.project.grid.height },
-    materials: createMaterialList(state.project.grid, state.palette),
-    steps: createMakingSteps(state.project.grid, state.palette, 'color')
+    materials: createMaterialList(state.project.grid, getDisplayPalette()),
+    steps: createMakingSteps(state.project.grid, getDisplayPalette(), 'color')
   };
   downloadBlob(`${safeFileName(state.project.name)}-steps.json`, new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
 }
@@ -664,7 +1120,13 @@ function getSelectedBead() {
 }
 
 function getBeadById(colorId) {
-  return state.palette.find((bead) => bead.id === colorId) ?? null;
+  return BEAD_CATALOG.find((bead) => bead.id === colorId) ?? state.palette.find((bead) => bead.id === colorId) ?? null;
+}
+
+function getDisplayPalette() {
+  const byId = new Map(BEAD_CATALOG.map((bead) => [bead.id, bead]));
+  for (const bead of state.palette) byId.set(bead.id, bead);
+  return [...byId.values()];
 }
 
 function brandLabel(brandKey) {
