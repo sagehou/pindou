@@ -4,6 +4,7 @@ import { createProject, parseProject, serializeProject } from './core/project.js
 import { createMakingSteps, createMaterialList } from './core/exporters.js';
 
 const BEAD_CATALOG = mergePalettes();
+const MIN_COORDINATE_GUTTER = 26;
 
 const dom = {
   projectName: document.querySelector('#projectName'),
@@ -277,24 +278,35 @@ function renderReplacement() {
 
 function renderCanvas() {
   const grid = state.project.grid;
-  const width = grid.width * state.zoom;
-  const height = grid.height * state.zoom;
-  dom.canvas.width = width;
-  dom.canvas.height = height;
-  dom.canvas.style.width = `${width}px`;
-  dom.canvas.style.height = `${height}px`;
-  ctx.clearRect(0, 0, width, height);
+  const metrics = getCanvasMetrics(grid);
+  dom.canvas.width = metrics.canvasWidth;
+  dom.canvas.height = metrics.canvasHeight;
+  dom.canvas.style.width = `${metrics.canvasWidth}px`;
+  dom.canvas.style.height = `${metrics.canvasHeight}px`;
+  ctx.clearRect(0, 0, metrics.canvasWidth, metrics.canvasHeight);
 
   updateCanvasLabels();
 
   if (state.view === 'source' && state.sourceImage) {
+    drawCanvasBackground(metrics);
     const crop = getSourceCropRect();
-    ctx.drawImage(state.sourceImage, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
-    drawGridLines(grid, width, height);
+    ctx.drawImage(
+      state.sourceImage,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      metrics.gridLeft,
+      metrics.gridTop,
+      metrics.gridWidth,
+      metrics.gridHeight
+    );
+    drawCoordinateRulers(grid, metrics);
+    drawGridLines(grid, metrics);
     return;
   }
 
-  drawCanvasBackground(width, height);
+  drawCanvasBackground(metrics);
   const step = state.view === 'steps' ? createMakingSteps(grid, getDisplayPalette())[state.activeStep] : null;
   const highlighted = new Set(step?.cells.map((cell) => `${cell.x},${cell.y}`) ?? []);
 
@@ -304,14 +316,15 @@ function renderCanvas() {
       if (!colorId) continue;
       const bead = getBeadById(colorId);
       const alpha = highlighted.size > 0 && !highlighted.has(`${x},${y}`) ? 0.22 : 1;
-      drawBead(x, y, bead, colorId, alpha);
+      drawBead(x, y, bead, colorId, alpha, metrics);
     }
   }
 
-  if (state.view === 'board') drawBoardLines(grid);
-  drawArtTextPreview();
-  drawSelectedCell();
-  drawGridLines(grid, width, height);
+  if (state.view === 'board') drawBoardLines(grid, metrics);
+  drawArtTextPreview(metrics);
+  drawSelectedCell(metrics);
+  drawGridLines(grid, metrics);
+  drawCoordinateRulers(grid, metrics);
 }
 
 function updateCanvasLabels() {
@@ -327,21 +340,89 @@ function updateCanvasLabels() {
   dom.canvasSubtitle.textContent = subtitle;
 }
 
-function drawCanvasBackground(width, height) {
+function getCanvasMetrics(grid) {
+  const gutter = Math.max(MIN_COORDINATE_GUTTER, Math.min(36, Math.round(state.zoom * 1.8)));
+  const gridWidth = grid.width * state.zoom;
+  const gridHeight = grid.height * state.zoom;
+  return {
+    gutter,
+    gridLeft: gutter,
+    gridTop: gutter,
+    gridWidth,
+    gridHeight,
+    canvasWidth: gridWidth + gutter,
+    canvasHeight: gridHeight + gutter
+  };
+}
+
+function drawCanvasBackground(metrics) {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(0, 0, metrics.canvasWidth, metrics.canvasHeight);
+  ctx.fillStyle = '#fbf8fb';
+  ctx.fillRect(0, 0, metrics.canvasWidth, metrics.gutter);
+  ctx.fillRect(0, 0, metrics.gutter, metrics.canvasHeight);
   ctx.fillStyle = '#f3f5f5';
   const tile = state.zoom;
-  for (let y = 0; y < height; y += tile) {
-    for (let x = 0; x < width; x += tile) {
-      if ((x / tile + y / tile) % 2 === 0) ctx.fillRect(x, y, tile, tile);
+  for (let y = 0; y < metrics.gridHeight; y += tile) {
+    for (let x = 0; x < metrics.gridWidth; x += tile) {
+      if ((x / tile + y / tile) % 2 === 0) {
+        ctx.fillRect(metrics.gridLeft + x, metrics.gridTop + y, tile, tile);
+      }
     }
   }
 }
 
-function drawBead(x, y, bead, colorId, alpha = 1) {
-  const left = x * state.zoom;
-  const top = y * state.zoom;
+function drawCoordinateRulers(grid, metrics) {
+  const step = coordinateLabelStep();
+  ctx.save();
+  ctx.fillStyle = '#fbf8fb';
+  ctx.fillRect(0, 0, metrics.canvasWidth, metrics.gutter);
+  ctx.fillRect(0, 0, metrics.gutter, metrics.canvasHeight);
+  ctx.strokeStyle = 'rgba(38, 50, 56, 0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(metrics.gridLeft + 0.5, 0);
+  ctx.lineTo(metrics.gridLeft + 0.5, metrics.canvasHeight);
+  ctx.moveTo(0, metrics.gridTop + 0.5);
+  ctx.lineTo(metrics.canvasWidth, metrics.gridTop + 0.5);
+  ctx.stroke();
+
+  ctx.fillStyle = '#5d5362';
+  ctx.font = `${Math.max(9, Math.min(11, metrics.gutter * 0.36))}px Segoe UI`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('X/Y', metrics.gutter / 2, metrics.gutter / 2);
+
+  for (let x = 0; x < grid.width; x += 1) {
+    const label = x + 1;
+    if (!shouldDrawCoordinateLabel(label, grid.width, step)) continue;
+    const center = metrics.gridLeft + x * state.zoom + state.zoom / 2;
+    ctx.fillText(String(label), center, metrics.gutter / 2);
+  }
+
+  ctx.textAlign = 'right';
+  for (let y = 0; y < grid.height; y += 1) {
+    const label = y + 1;
+    if (!shouldDrawCoordinateLabel(label, grid.height, step)) continue;
+    const center = metrics.gridTop + y * state.zoom + state.zoom / 2;
+    ctx.fillText(String(label), metrics.gutter - 5, center);
+  }
+  ctx.restore();
+}
+
+function coordinateLabelStep() {
+  if (state.zoom >= 18) return 1;
+  if (state.zoom >= 12) return 5;
+  return 10;
+}
+
+function shouldDrawCoordinateLabel(label, max, step) {
+  return label === 1 || label === max || label % step === 0;
+}
+
+function drawBead(x, y, bead, colorId, alpha = 1, metrics = getCanvasMetrics(state.project.grid)) {
+  const left = metrics.gridLeft + x * state.zoom;
+  const top = metrics.gridTop + y * state.zoom;
   const size = state.zoom;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -367,46 +448,51 @@ function drawBead(x, y, bead, colorId, alpha = 1) {
   ctx.restore();
 }
 
-function drawGridLines(grid, width, height) {
+function drawGridLines(grid, metrics) {
   ctx.strokeStyle = 'rgba(38, 50, 56, 0.18)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let x = 0; x <= grid.width; x += 1) {
-    ctx.moveTo(x * state.zoom + 0.5, 0);
-    ctx.lineTo(x * state.zoom + 0.5, height);
+    ctx.moveTo(metrics.gridLeft + x * state.zoom + 0.5, metrics.gridTop);
+    ctx.lineTo(metrics.gridLeft + x * state.zoom + 0.5, metrics.gridTop + metrics.gridHeight);
   }
   for (let y = 0; y <= grid.height; y += 1) {
-    ctx.moveTo(0, y * state.zoom + 0.5);
-    ctx.lineTo(width, y * state.zoom + 0.5);
+    ctx.moveTo(metrics.gridLeft, metrics.gridTop + y * state.zoom + 0.5);
+    ctx.lineTo(metrics.gridLeft + metrics.gridWidth, metrics.gridTop + y * state.zoom + 0.5);
   }
   ctx.stroke();
 }
 
-function drawBoardLines(grid) {
+function drawBoardLines(grid, metrics) {
   const boardWidth = state.project.board.width;
   const boardHeight = state.project.board.height;
   ctx.strokeStyle = '#263238';
   ctx.lineWidth = 2;
   ctx.beginPath();
   for (let x = boardWidth; x < grid.width; x += boardWidth) {
-    ctx.moveTo(x * state.zoom + 0.5, 0);
-    ctx.lineTo(x * state.zoom + 0.5, grid.height * state.zoom);
+    ctx.moveTo(metrics.gridLeft + x * state.zoom + 0.5, metrics.gridTop);
+    ctx.lineTo(metrics.gridLeft + x * state.zoom + 0.5, metrics.gridTop + metrics.gridHeight);
   }
   for (let y = boardHeight; y < grid.height; y += boardHeight) {
-    ctx.moveTo(0, y * state.zoom + 0.5);
-    ctx.lineTo(grid.width * state.zoom, y * state.zoom + 0.5);
+    ctx.moveTo(metrics.gridLeft, metrics.gridTop + y * state.zoom + 0.5);
+    ctx.lineTo(metrics.gridLeft + metrics.gridWidth, metrics.gridTop + y * state.zoom + 0.5);
   }
   ctx.stroke();
 }
 
-function drawSelectedCell() {
+function drawSelectedCell(metrics = getCanvasMetrics(state.project.grid)) {
   if (!state.selectedCell) return;
   const { x, y } = state.selectedCell;
   ctx.save();
   ctx.strokeStyle = '#9a7aa2';
   ctx.lineWidth = 2;
   ctx.setLineDash([4, 3]);
-  ctx.strokeRect(x * state.zoom + 2, y * state.zoom + 2, state.zoom - 4, state.zoom - 4);
+  ctx.strokeRect(
+    metrics.gridLeft + x * state.zoom + 2,
+    metrics.gridTop + y * state.zoom + 2,
+    state.zoom - 4,
+    state.zoom - 4
+  );
   ctx.restore();
 }
 
@@ -896,10 +982,10 @@ function collectTextCells(maskCtx, grid, scale, colorId, cellMap) {
   }
 }
 
-function drawArtTextPreview() {
+function drawArtTextPreview(metrics = getCanvasMetrics(state.project.grid)) {
   if (!state.textPreview?.cells.length) return;
   for (const cell of state.textPreview.cells) {
-    drawBead(cell.x, cell.y, getBeadById(cell.colorId), cell.colorId, 0.78);
+    drawBead(cell.x, cell.y, getBeadById(cell.colorId), cell.colorId, 0.78, metrics);
   }
 }
 
@@ -1032,8 +1118,13 @@ function applyCanvasTool(event) {
 
 function eventToCell(event) {
   const rect = dom.canvas.getBoundingClientRect();
-  const x = Math.floor((event.clientX - rect.left) / state.zoom);
-  const y = Math.floor((event.clientY - rect.top) / state.zoom);
+  const metrics = getCanvasMetrics(state.project.grid);
+  const scaleX = dom.canvas.width / rect.width;
+  const scaleY = dom.canvas.height / rect.height;
+  const canvasX = (event.clientX - rect.left) * scaleX;
+  const canvasY = (event.clientY - rect.top) * scaleY;
+  const x = Math.floor((canvasX - metrics.gridLeft) / state.zoom);
+  const y = Math.floor((canvasY - metrics.gridTop) / state.zoom);
   if (x < 0 || y < 0 || x >= state.project.grid.width || y >= state.project.grid.height) return null;
   return { x, y };
 }
