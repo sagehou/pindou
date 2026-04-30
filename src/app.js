@@ -55,6 +55,7 @@ const dom = {
   exportStepsBtn: document.querySelector('#exportStepsBtn'),
   brandFilters: document.querySelector('#brandFilters'),
   selectedColor: document.querySelector('#selectedColor'),
+  remapPaletteBtn: document.querySelector('#remapPaletteBtn'),
   paletteGrid: document.querySelector('#paletteGrid'),
   disableCurrent: document.querySelector('#disableCurrent'),
   replaceSource: document.querySelector('#replaceSource'),
@@ -157,6 +158,7 @@ function bindEvents() {
   dom.replaceColorBtn.addEventListener('click', replaceSelectedColor);
   dom.exportPngBtn.addEventListener('click', exportPng);
   dom.exportStepsBtn.addEventListener('click', exportSteps);
+  dom.remapPaletteBtn.addEventListener('click', remapCanvasToActivePalette);
   dom.webdavSyncBtn.addEventListener('click', syncWebDav);
   dom.webdavUrl.addEventListener('change', saveWebDavSettings);
   dom.webdavUser.addEventListener('change', saveWebDavSettings);
@@ -451,29 +453,33 @@ function switchPaletteBrand(brandKey) {
   if (!DOMESTIC_PALETTES[brandKey] || state.project.paletteBrands[0] === brandKey) return;
 
   const nextPalette = mergePalettes([brandKey]);
-  const nextPaletteIds = new Set(nextPalette.map((bead) => bead.id));
-  const nextDisabled = state.project.disabledColorIds.filter((colorId) => nextPaletteIds.has(colorId));
   const previousSelected = getBeadById(state.selectedColorId);
-  const previousSourceColorId = state.selectedSourceColorId;
-  const remapped = remapGridToPalette(state.project.grid, nextPalette, nextDisabled);
-
-  if (remapped.changed) {
-    pushUndo();
-    state.project.grid = remapped.grid;
-    state.redoStack = [];
-  }
 
   state.project.paletteBrands = [brandKey];
-  state.project.disabledColorIds = nextDisabled;
   state.palette = nextPalette;
   state.selectedColorId = previousSelected
-    ? nearestPaletteColorId(previousSelected.rgb, nextPalette, nextDisabled)
+    ? nearestPaletteColorId(previousSelected.rgb, nextPalette, state.project.disabledColorIds)
     : nextPalette[0]?.id ?? null;
-  state.selectedSourceColorId = previousSourceColorId
-    ? remapped.colorMap.get(previousSourceColorId) ?? remapColorIdToPalette(previousSourceColorId, nextPalette, nextDisabled)
-    : null;
 
-  autosave(remapped.changed ? `已切换到 ${brandLabel(brandKey)} 并重配画布颜色` : `已切换到 ${brandLabel(brandKey)} 色卡`);
+  autosave(`已切换到 ${brandLabel(brandKey)} 色卡`);
+  renderAll();
+}
+
+function remapCanvasToActivePalette() {
+  const remapped = remapGridToPalette(state.project.grid, state.palette, state.project.disabledColorIds);
+  if (!remapped.changed) {
+    setSaveState('画布已经使用当前色卡');
+    return;
+  }
+
+  pushUndo();
+  state.project.grid = remapped.grid;
+  state.selectedSourceColorId = state.selectedSourceColorId
+    ? remapped.colorMap.get(state.selectedSourceColorId) ?? state.selectedSourceColorId
+    : null;
+  state.textPreview = null;
+  state.redoStack = [];
+  autosave(`已转换画布到 ${brandLabel(state.project.paletteBrands[0])} 色卡`);
   renderAll();
 }
 

@@ -624,6 +624,10 @@ label {
     #fff;
 }
 
+#remapPaletteBtn {
+  margin-bottom: 10px;
+}
+
 .replace-source {
   display: grid;
   gap: 4px;
