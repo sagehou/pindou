@@ -37,17 +37,23 @@ export const DOMESTIC_PALETTES = {
   ]
 };
 
+const NEUTRAL_CHROMA_THRESHOLD = 28;
+
 export function mergePalettes(brandNames = Object.keys(DOMESTIC_PALETTES)) {
   return brandNames.flatMap((brand) => DOMESTIC_PALETTES[brand] ?? []);
 }
 
 export function findNearestBead(rgb, palette, options = {}) {
   const disabled = new Set(options.disabledColorIds ?? []);
+  const enabledPalette = palette.filter((bead) => !disabled.has(bead.id));
+  const neutralPalette = isNeutralRgb(rgb)
+    ? enabledPalette.filter((bead) => isNeutralRgb(bead.rgb))
+    : [];
+  const candidates = neutralPalette.length > 0 ? neutralPalette : enabledPalette;
   let best = null;
   let bestDistance = Number.POSITIVE_INFINITY;
 
-  for (const bead of palette) {
-    if (disabled.has(bead.id)) continue;
+  for (const bead of candidates) {
     const distance = perceptualDistance(rgb, bead.rgb);
     if (distance < bestDistance) {
       best = bead;
@@ -74,4 +80,8 @@ function perceptualDistance(a, b) {
   const redWeight = 2 + rMean / 256;
   const blueWeight = 2 + (255 - rMean) / 256;
   return Math.sqrt(redWeight * r * r + 4 * g * g + blueWeight * blue * blue);
+}
+
+function isNeutralRgb(rgb) {
+  return Math.max(...rgb) - Math.min(...rgb) <= NEUTRAL_CHROMA_THRESHOLD;
 }

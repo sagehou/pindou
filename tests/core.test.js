@@ -21,6 +21,13 @@ test('findNearestBead skips disabled colors', () => {
   assert.notEqual(bead.id, 'MARD:M-R01');
 });
 
+test('findNearestBead keeps gray source colors on neutral bead colors', () => {
+  const palette = mergePalettes(['MARD']);
+  const bead = findNearestBead([128, 128, 128], palette);
+
+  assert.ok(['MARD:M-K01', 'MARD:M-W01'].includes(bead.id));
+});
+
 test('grid editing paints, fills connected cells, and replaces colors', () => {
   let grid = createGrid(3, 3, 'empty');
   grid = paintCell(grid, 0, 0, 'red');

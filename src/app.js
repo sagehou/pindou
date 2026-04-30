@@ -5,6 +5,8 @@ import { createMakingSteps, createMaterialList } from './core/exporters.js';
 
 const BEAD_CATALOG = mergePalettes();
 const MIN_COORDINATE_GUTTER = 26;
+const SOURCE_ALPHA_THRESHOLD = 64;
+const SOURCE_MATTE_RGB = [255, 255, 255];
 
 const dom = {
   projectName: document.querySelector('#projectName'),
@@ -644,13 +646,27 @@ function createGridFromSourceImage(palette) {
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = (y * width + x) * 4;
-      if (data[index + 3] < 24) continue;
-      const bead = findNearestBead([data[index], data[index + 1], data[index + 2]], palette, { disabledColorIds });
+      const rgb = sourcePixelRgb(data, index);
+      if (!rgb) continue;
+      const bead = findNearestBead(rgb, palette, { disabledColorIds });
       grid.cells[y][x] = bead.id;
     }
   }
 
   return grid;
+}
+
+function sourcePixelRgb(data, index) {
+  const alpha = data[index + 3];
+  if (alpha < SOURCE_ALPHA_THRESHOLD) return null;
+  if (alpha >= 252) return [data[index], data[index + 1], data[index + 2]];
+
+  const opacity = alpha / 255;
+  return [
+    Math.round(data[index] * opacity + SOURCE_MATTE_RGB[0] * (1 - opacity)),
+    Math.round(data[index + 1] * opacity + SOURCE_MATTE_RGB[1] * (1 - opacity)),
+    Math.round(data[index + 2] * opacity + SOURCE_MATTE_RGB[2] * (1 - opacity))
+  ];
 }
 
 function cloneGrid(grid) {
