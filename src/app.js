@@ -373,11 +373,26 @@ function drawCanvasBackground(metrics) {
 }
 
 function drawCoordinateRulers(grid, metrics) {
-  const step = coordinateLabelStep();
   ctx.save();
   ctx.fillStyle = '#fbf8fb';
   ctx.fillRect(0, 0, metrics.canvasWidth, metrics.gutter);
   ctx.fillRect(0, 0, metrics.gutter, metrics.canvasHeight);
+
+  ctx.strokeStyle = 'rgba(38, 50, 56, 0.11)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= grid.width; x += 1) {
+    const lineX = metrics.gridLeft + x * state.zoom + 0.5;
+    ctx.moveTo(lineX, 0);
+    ctx.lineTo(lineX, metrics.gutter);
+  }
+  for (let y = 0; y <= grid.height; y += 1) {
+    const lineY = metrics.gridTop + y * state.zoom + 0.5;
+    ctx.moveTo(0, lineY);
+    ctx.lineTo(metrics.gutter, lineY);
+  }
+  ctx.stroke();
+
   ctx.strokeStyle = 'rgba(38, 50, 56, 0.22)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -388,36 +403,42 @@ function drawCoordinateRulers(grid, metrics) {
   ctx.stroke();
 
   ctx.fillStyle = '#5d5362';
-  ctx.font = `${Math.max(9, Math.min(11, metrics.gutter * 0.36))}px Segoe UI`;
+  const labelFontSize = coordinateLabelFontSize(grid);
+  const rotateColumnLabels = state.zoom < 14 || String(grid.width).length > 2;
+  ctx.font = `${labelFontSize}px Segoe UI`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('X/Y', metrics.gutter / 2, metrics.gutter / 2);
 
   for (let x = 0; x < grid.width; x += 1) {
-    const label = x + 1;
-    if (!shouldDrawCoordinateLabel(label, grid.width, step)) continue;
+    const label = String(x + 1);
     const center = metrics.gridLeft + x * state.zoom + state.zoom / 2;
-    ctx.fillText(String(label), center, metrics.gutter / 2);
+    if (rotateColumnLabels) {
+      ctx.save();
+      ctx.translate(center, metrics.gutter - 4);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.fillText(label, center, metrics.gutter / 2);
+    }
   }
 
   ctx.textAlign = 'right';
   for (let y = 0; y < grid.height; y += 1) {
-    const label = y + 1;
-    if (!shouldDrawCoordinateLabel(label, grid.height, step)) continue;
+    const label = String(y + 1);
     const center = metrics.gridTop + y * state.zoom + state.zoom / 2;
-    ctx.fillText(String(label), metrics.gutter - 5, center);
+    ctx.fillText(label, metrics.gutter - 5, center);
   }
   ctx.restore();
 }
 
-function coordinateLabelStep() {
-  if (state.zoom >= 18) return 1;
-  if (state.zoom >= 12) return 5;
-  return 10;
-}
-
-function shouldDrawCoordinateLabel(label, max, step) {
-  return label === 1 || label === max || label % step === 0;
+function coordinateLabelFontSize(grid) {
+  const maxDigits = String(Math.max(grid.width, grid.height)).length;
+  const denseLimit = 22 / maxDigits;
+  return Math.max(5, Math.min(10, state.zoom - 1, state.zoom * 0.62, denseLimit));
 }
 
 function drawBead(x, y, bead, colorId, alpha = 1, metrics = getCanvasMetrics(state.project.grid)) {
