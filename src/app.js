@@ -452,16 +452,26 @@ function applyInitialViewportDefaults() {
 function switchPaletteBrand(brandKey) {
   if (!DOMESTIC_PALETTES[brandKey] || state.project.paletteBrands[0] === brandKey) return;
 
+  syncActivePaletteVariant();
   const nextPalette = mergePalettes([brandKey]);
   const previousSelected = getBeadById(state.selectedColorId);
+  const previousBrand = activeBrandKey();
 
   state.project.paletteBrands = [brandKey];
   state.palette = nextPalette;
+  state.project.grid = getPaletteVariantGrid(brandKey)
+    ?? createPaletteGridFromSource(nextPalette)
+    ?? remapGridToPalette(state.project.grid, nextPalette, state.project.disabledColorIds).grid;
   state.selectedColorId = previousSelected
     ? nearestPaletteColorId(previousSelected.rgb, nextPalette, state.project.disabledColorIds)
     : nextPalette[0]?.id ?? null;
+  state.selectedCell = null;
+  state.selectedSourceColorId = null;
+  state.textPreview = null;
+  state.undoStack = [];
+  state.redoStack = [];
 
-  autosave(`已切换到 ${brandLabel(brandKey)} 色卡`);
+  autosave(`已从 ${brandLabel(previousBrand)} 切换到 ${brandLabel(brandKey)} 配色`);
   renderAll();
 }
 
@@ -481,6 +491,66 @@ function remapCanvasToActivePalette() {
   state.redoStack = [];
   autosave(`已转换画布到 ${brandLabel(state.project.paletteBrands[0])} 色卡`);
   renderAll();
+}
+
+function activeBrandKey() {
+  return state.project.paletteBrands?.[0] ?? 'MARD';
+}
+
+function ensurePaletteVariants() {
+  if (!state.project.paletteVariants || typeof state.project.paletteVariants !== 'object') {
+    state.project.paletteVariants = {};
+  }
+}
+
+function syncActivePaletteVariant() {
+  ensurePaletteVariants();
+  state.project.paletteVariants[activeBrandKey()] = cloneGrid(state.project.grid);
+}
+
+function getPaletteVariantGrid(brandKey) {
+  ensurePaletteVariants();
+  const variant = state.project.paletteVariants[brandKey];
+  if (!variant || variant.width !== state.project.grid.width || variant.height !== state.project.grid.height) return null;
+  return cloneGrid(variant);
+}
+
+function createPaletteGridFromSource(palette) {
+  if (!state.sourceImage) return null;
+  return createGridFromSourceImage(palette);
+}
+
+function createGridFromSourceImage(palette) {
+  const width = clamp(Number(dom.gridWidth.value), 8, 220);
+  const height = clamp(Number(dom.gridHeight.value), 8, 220);
+  const crop = getSourceCropRect();
+  const offscreen = document.createElement('canvas');
+  offscreen.width = width;
+  offscreen.height = height;
+  const offscreenCtx = offscreen.getContext('2d', { willReadFrequently: true });
+  offscreenCtx.imageSmoothingEnabled = dom.pixelMode.value !== 'nearest';
+  offscreenCtx.drawImage(state.sourceImage, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
+  const data = offscreenCtx.getImageData(0, 0, width, height).data;
+  const disabledColorIds = state.project.disabledColorIds;
+  const grid = createGrid(width, height, null);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      if (data[index + 3] < 24) continue;
+      const bead = findNearestBead([data[index], data[index + 1], data[index + 2]], palette, { disabledColorIds });
+      grid.cells[y][x] = bead.id;
+    }
+  }
+
+  return grid;
+}
+
+function cloneGrid(grid) {
+  return {
+    ...grid,
+    cells: grid.cells.map((row) => [...row])
+  };
 }
 
 function remapGridToPalette(grid, targetPalette, disabledColorIds = []) {
@@ -868,30 +938,10 @@ function pixelizeSourceImage(successMessage = '已生成拼豆图') {
     setSaveState('请先导入图片');
     return;
   }
-  const width = clamp(Number(dom.gridWidth.value), 8, 220);
-  const height = clamp(Number(dom.gridHeight.value), 8, 220);
-  const crop = getSourceCropRect();
-  const offscreen = document.createElement('canvas');
-  offscreen.width = width;
-  offscreen.height = height;
-  const offscreenCtx = offscreen.getContext('2d', { willReadFrequently: true });
-  offscreenCtx.imageSmoothingEnabled = dom.pixelMode.value !== 'nearest';
-  offscreenCtx.drawImage(state.sourceImage, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
-  const data = offscreenCtx.getImageData(0, 0, width, height).data;
-  const disabledColorIds = state.project.disabledColorIds;
-  const grid = createGrid(width, height, null);
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const index = (y * width + x) * 4;
-      if (data[index + 3] < 24) continue;
-      const bead = findNearestBead([data[index], data[index + 1], data[index + 2]], state.palette, { disabledColorIds });
-      grid.cells[y][x] = bead.id;
-    }
-  }
 
   pushUndo();
-  state.project.grid = grid;
+  state.project.grid = createGridFromSourceImage(state.palette);
+  state.project.paletteVariants = {};
   state.project.beadSizeMm = Number(dom.beadSize.value);
   state.tool = 'select';
   state.selectedCell = null;
@@ -1047,6 +1097,7 @@ function replaceSelectedColor() {
 }
 
 function saveProjectFile() {
+  syncActivePaletteVariant();
   downloadBlob(`${safeFileName(state.project.name)}.pindou`, new Blob([serializeProject(state.project)], { type: 'application/json' }));
   setSaveState('工程已导出');
 }
@@ -1091,6 +1142,7 @@ async function syncWebDav() {
 }
 
 function autosave(statusText = '已自动恢复点') {
+  syncActivePaletteVariant();
   localStorage.setItem('pindou.autosave', serializeProject(state.project));
   setSaveState(statusText);
 }

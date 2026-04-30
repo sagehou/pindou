@@ -21,6 +21,7 @@ export function createProject(options = {}) {
     crop: options.crop ?? null,
     mask: options.mask ?? null,
     grid: options.grid ?? createGrid(width, height, null),
+    paletteVariants: options.paletteVariants ?? {},
     inventory: options.inventory ?? {},
     disabledColorIds: options.disabledColorIds ?? [],
     exportSettings: options.exportSettings ?? { mode: 'color', pageSize: 'A4', showSymbols: true },
